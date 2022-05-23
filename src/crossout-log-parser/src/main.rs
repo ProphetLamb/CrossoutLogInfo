@@ -49,8 +49,7 @@ fn main() {
 
 fn directory_logs(args: DirectoryArgs) -> Result<(), Error> {
     let mut log_dirs = Vec::default();
-    for dir in args
-        .directory
+    for dir in validate_logs_dir(args.directory)?
         .read_dir()?
         .flatten()
         .filter(|sub| sub.file_type().map_or(false, |t| t.is_dir()))
@@ -65,7 +64,6 @@ fn directory_logs(args: DirectoryArgs) -> Result<(), Error> {
         let mut combat_log = dir.path();
         combat_log.push("combat.log");
         let output = format!("./publish/{}.json", datetime.format("%Y.%m.%d %H.%M.%S"));
-        let s = combat_log.to_str();
         parse_log(ParseArgs {
             input: combat_log,
             date: datetime.date(),
@@ -74,6 +72,18 @@ fn directory_logs(args: DirectoryArgs) -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+fn validate_logs_dir(dir: PathBuf) -> Result<PathBuf, Error> {
+    if dir.as_os_str().is_empty() {
+        let mut dir = dirs::document_dir().ok_or(Error::DocDirNotFound)?;
+        dir.push("My Games");
+        dir.push("Crossout");
+        dir.push("logs");
+        Ok(dir)
+    } else {
+        Ok(dir)
+    }
 }
 
 fn parse_log(args: ParseArgs) -> Result<(), Error> {
@@ -113,8 +123,7 @@ fn write_output(output: &Path, messages: Vec<Entry>, errors: Vec<String>) -> Res
     let mut writer = BufWriter::new(writer);
     for msg in messages {
         writer
-            .write_all(format!("{:?}\n", msg).as_bytes())
-            .expect("unable to write to output file");
+            .write_all(format!("{:?}\n", msg).as_bytes())?;
     }
     if !errors.is_empty() {
         let writer = fs::File::create(output.with_extension("errors.log"))?;
@@ -128,7 +137,7 @@ fn write_output(output: &Path, messages: Vec<Entry>, errors: Vec<String>) -> Res
 
 #[derive(Debug)]
 pub enum Error {
-    None,
+    DocDirNotFound,
     File(io::Error),
 }
 
@@ -137,6 +146,7 @@ impl std::error::Error for Error {}
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Error::DocDirNotFound => write!(f, "Document directory not found"),
             Error::File(e) => write!(f, "{}", e),
             _ => write!(f, "Unexpected error occurred"),
         }
@@ -151,7 +161,7 @@ impl From<io::Error> for Error {
 
 #[cfg(test)]
 mod test {
-    use std::{env, fmt::Debug, path, str::FromStr};
+    use std::str::FromStr;
 
     use chrono::NaiveDate;
 
