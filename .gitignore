@@ -414,3 +414,7 @@ FodyWeavers.xsd
 publish.vscode/
 
 .idea/
+
+# Rust Cargo
+target/
+Cargo.lock
