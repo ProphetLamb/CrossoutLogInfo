@@ -13,7 +13,7 @@
     <PackageReleaseNotes>$([System.IO.File]::ReadAllText("$(MSBuildProjectDirectory)/RELEASENOTES.md"))</PackageReleaseNotes>
 
     <PackageIcon>logo.png</PackageIcon>
-    <PackageIconUrl>https://github.com/+++YOU/+++PROJECT/blob/master/logo.png</PackageIconUrl>
+    <PackageIconUrl>https://github.com/ProphetLamb/CrossoutLogInfo/blob/master/logo.png</PackageIconUrl>
 
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
