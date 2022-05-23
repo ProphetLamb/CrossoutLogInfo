@@ -10,24 +10,26 @@ use std::{
     io::{self, BufRead, BufReader},
 };
 
-#[macro_use]
-extern crate tokio;
-
 mod log;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 enum Args {
+    /// Parses a combat.log file
     Parse(ParseArgs),
+    /// Parses all logs in the log directory, either inferred or specified
     Directory(DirectoryArgs),
 }
 
 #[derive(Parser, Debug)]
 struct ParseArgs {
+    /// The input combat.log file
     #[clap(short, long)]
     input: PathBuf,
+    /// The date of the combat.log file
     #[clap(short, long)]
     date: NaiveDate,
+    /// The output object file
     #[clap(short, long)]
     output: PathBuf,
 }
