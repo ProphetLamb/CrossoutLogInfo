@@ -1,0 +1,42 @@
+version: "2.3"
+services:
+  api:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    ports:
+      - "8700:8000"
+    expose:
+      - 8701
+    depends_on:
+      - db
+    networks:
+      - api_postgres
+    links:
+      - db
+    environment:
+      DATABASE_URL: "postgres://root:toor@db:5432"
+      RUST_BACKTRACE: 1
+  db:
+    image: postgres:14
+    mem_limit: 1536MB
+    mem_reservation: 1G
+    command:
+      ["postgres", "-c", "log_statement=all", "-c", "log_destination=stderr"]
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: toor
+    ports:
+      - "5432:5432"
+    networks:
+      - api_postgres
+    volumes:
+      - ./db/:/docker-entrypoint-initdb.d/
+      - db-data:/var/lib/postgresql/data
+
+networks:
+  api_postgres:
+    driver: bridge
+
+volumes:
+  db-data:
