@@ -1,0 +1,2 @@
+[workspace]
+members = ["crossout-log-watcher"]
