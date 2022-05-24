@@ -1,17 +1,16 @@
 #![feature(let_chains)]
 
 use std::io::{BufWriter, Write};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::{
-    fs,
-    io::{self, BufRead, BufReader},
-};
+use std::{fs, io};
 
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDateTime;
 use clap::Parser;
 
 use log::Entry;
-use parse::parse_entry;
+use parse::logs_in_dir;
+
 mod log;
 mod parse;
 
@@ -31,7 +30,7 @@ struct FileArgs {
     input: PathBuf,
     /// The date of the combat.log file
     #[clap(short, long)]
-    date: NaiveDate,
+    date: NaiveDateTime,
     /// The output object file
     #[clap(short, long)]
     output: PathBuf,
@@ -56,59 +55,38 @@ fn main() {
     }
 }
 
-fn parse_logs_in_dir(args: DirectoryArgs) -> Result<(), Error> {
-    if !dir_exists(&args.input) {
-        return Err(Error::DocDirNotFound);
+fn parse_log(args: FileArgs) -> Result<(), Error> {
+    if !args.input.is_file() {
+        return Err(Error::FileNotFound(args.input));
     }
-    if !dir_exists(&args.output) {
+    if args.output.parent().map(|p| p.is_dir()).unwrap_or(false) {
+        return Err(Error::DirNotFound(args.output));
+    }
+    let (messages, errors) = parse::parse_logs(vec![(args.input, args.date.date(), 0..usize::MAX)]);
+    write_output(&args.output, messages, errors)?;
+    Ok(())
+}
+
+fn parse_logs_in_dir(args: DirectoryArgs) -> Result<(), Error> {
+    let input = amortized_logs_dir(args.input)?;
+    if !input.is_dir() {
+        return Err(Error::LogDirNotInferred);
+    }
+    if !args.output.is_dir() {
         fs::create_dir_all(&args.output)?;
     }
-    let logs = logs_in_dir(args.input)?;
-    parse_log_files(logs, &args.output)
-}
+    let logs = logs_in_dir(input)?;
+    let (messages, errors) = parse::parse_logs(logs.into_iter().map(|(p, dt)| (p, dt.date(),
+     0..usize::MAX)));
 
-fn dir_exists(path: &Path) -> bool {
-    if let Ok(meta) = path.metadata() {
-        meta.is_dir()
-    } else {
-        false
-    }
-}
-
-fn logs_in_dir(input: PathBuf) -> Result<Vec<(fs::DirEntry, NaiveDateTime)>, Error> {
-    let mut log_dirs = Vec::default();
-    for dir in amortized_logs_dir(input)?
-        .read_dir()?
-        .flatten()
-        .filter(|sub| sub.file_type().map_or(false, |t| t.is_dir()))
-    {
-        let name = dir.file_name();
-        if let Some(name) = name.to_str() && let Ok(date) = NaiveDateTime::parse_from_str(name, "%Y.%m.%d %H.%M.%S") {
-            log_dirs.push((dir, date))
-        }
-    }
-
-    Ok(log_dirs)
-}
-
-fn parse_log_files(log_dirs: Vec<(fs::DirEntry, NaiveDateTime)>, output_dir: &Path) -> Result<(), Error> {
-    for (dir, datetime) in log_dirs {
-        let mut input = dir.path();
-        input.push("combat.log");
-        let mut output = output_dir.to_path_buf();
-        output.push(format!("{}.bin", datetime.format("%Y.%m.%d %H.%M.%S")));
-        parse_log(FileArgs {
-            input,
-            date: datetime.date(),
-            output,
-        })?;
-    };
-    Ok(())
+    let mut output = args.output;
+    output.push("combat.log.bin");
+    write_output(&output, messages, errors)
 }
 
 fn amortized_logs_dir(dir: PathBuf) -> Result<PathBuf, Error> {
     if dir.as_os_str().is_empty() {
-        let mut dir = dirs::document_dir().ok_or(Error::DocDirNotFound)?;
+        let mut dir = dirs::document_dir().ok_or(Error::LogDirNotInferred)?;
         dir.push("My Games");
         dir.push("Crossout");
         dir.push("logs");
@@ -118,45 +96,10 @@ fn amortized_logs_dir(dir: PathBuf) -> Result<PathBuf, Error> {
     }
 }
 
-fn parse_log(args: FileArgs) -> Result<(), Error> {
-    let input = open_file(&args.input)?;
-    let mut messages = Vec::with_capacity(1024);
-    let mut errors = Vec::with_capacity(1024);
-    parse_messages(input, args.date, &mut messages, &mut errors);
-    write_output(&args.output, messages, errors)?;
-    Ok(())
-}
-
-fn open_file(input: &Path) -> Result<BufReader<fs::File>, io::Error> {
-    let file = fs::File::open(input)?;
-    let reader = io::BufReader::new(file);
-    Ok(reader)
-}
-
-fn parse_messages<R>(
-    source: BufReader<R>,
-    date: NaiveDate,
-    messages: &mut Vec<Entry>,
-    errors: &mut Vec<String>,
-) where
-    R: std::io::Read,
-{
-    for line in source.lines().flatten() {
-        if let Ok((_, message)) = parse_entry::<()>(date)(&line) {
-            messages.push(message);
-        } else if !line.is_empty() {
-            errors.push(line.to_owned());
-        }
-    }
-}
-
 fn write_output(output: &Path, messages: Vec<Entry>, errors: Vec<String>) -> Result<(), Error> {
     let writer = fs::File::create(output)?;
-    let mut writer = BufWriter::new(writer);
-    for msg in messages {
-        writer
-            .write_all(format!("{:?}\n", msg).as_bytes())?;
-    }
+    bincode::serialize_into(BufWriter::new(writer), &messages)?;
+
     if !errors.is_empty() {
         let writer = fs::File::create(output.with_extension("errors.log"))?;
         let mut writer = BufWriter::new(writer);
@@ -169,8 +112,11 @@ fn write_output(output: &Path, messages: Vec<Entry>, errors: Vec<String>) -> Res
 
 #[derive(Debug)]
 pub enum Error {
-    DocDirNotFound,
+    LogDirNotInferred,
+    FileNotFound(PathBuf),
+    DirNotFound(PathBuf),
     File(io::Error),
+    Ser(bincode::Error),
 }
 
 impl std::error::Error for Error {}
@@ -178,7 +124,9 @@ impl std::error::Error for Error {}
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::DocDirNotFound => write!(f, "Document directory not found"),
+            Error::LogDirNotInferred => write!(f, "Log directory could not be inferred"),
+            Error::FileNotFound(p) => write!(f, "File `{}` not found", p.display()),
+            Error::DirNotFound(p) => write!(f, "Directory `{}` not found", p.display()),
             Error::File(e) => write!(f, "{}", e),
             _ => write!(f, "Unexpected error occurred"),
         }
@@ -191,59 +139,18 @@ impl From<io::Error> for Error {
     }
 }
 
+impl From<bincode::Error> for Error {
+    fn from(e: bincode::Error) -> Self {
+        Error::Ser(e)
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-
-    use chrono::NaiveDate;
-
-    use crate::log::DamageFlag;
-
     use super::*;
 
     #[test]
-    fn test_parse_log() {
-        let input = PathBuf::from_str("./scripts/unique_combat.log").expect("nope");
-        let output = PathBuf::from_str("./output.log").expect("nope");
-        let date = NaiveDate::from_ymd(2000, 1, 1);
-        parse_log(FileArgs {
-            input,
-            date,
-            output,
-        })
-        .ok();
-    }
-
-    #[test]
     fn test_directory_logs() {
-        let mut directory = dirs::document_dir().expect("nope");
-        directory.push("My Games");
-        directory.push("Crossout");
-        directory.push("logs");
-        parse_logs_in_dir(DirectoryArgs { input: directory, output: "./publish".into() }).expect("nope");
-    }
-
-    #[test]
-    fn test_damage_flags() {
-        let flags = vec![
-            "DMG_DIRECT",
-            "HUD_IMPORTANT",
-            "HUD_HIDDEN",
-            "DMG_GENERIC",
-            "SUICIDE",
-            "SUICIDE_DESPAWN",
-            "DMG_BLAST",
-            "CONTINUOUS",
-            "DMG_ENERGY",
-            "CONTACT",
-            "DMG_COLLISION",
-            "DMG_FLAME",
-        ];
-        for flag in flags {
-            let result = str::parse::<DamageFlag>(flag);
-            if let Err(e) = result {
-                println!("{:?} failed with {:?}", flag, e)
-            }
-        }
+        parse_logs_in_dir(DirectoryArgs { input: "".into(), output: "./publish".into() }).expect("nope");
     }
 }
