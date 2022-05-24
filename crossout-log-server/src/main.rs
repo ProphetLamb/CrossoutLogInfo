@@ -1,61 +1,42 @@
-use actix_web::{guard, web, App, HttpResponse, HttpServer, Result};
-use async_graphql::extensions::ApolloTracing;
-use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
-use async_graphql::{EmptyMutation, EmptySubscription, Schema};
-use async_graphql_actix_web::{Request, Response};
-use std::env;
+#[macro_use]
+extern crate rocket;
+#[macro_use]
+extern crate diesel;
+extern crate juniper;
 
-mod application;
 mod db;
-mod domain;
-mod persistance;
-mod query;
-mod state;
+mod gql;
 
-use query::QueryRoot;
-use state::State;
+use gql::{
+    context::GraphQLContext,
+    schema::{Mutation, Query, Schema},
+};
+use juniper::EmptySubscription;
+use rocket::{response::content, Rocket, State};
 
-type CultSchema = Schema<QueryRoot, EmptyMutation, EmptySubscription>;
-
-async fn index(schema: web::Data<CultSchema>, req: Request) -> Response {
-    schema.execute(req.into_inner()).await.into()
+#[get("/")]
+fn graphiql() -> content::RawHtml<String> {
+    juniper_rocket::graphiql_source("/graphql", None)
 }
 
-async fn index_playground() -> Result<HttpResponse> {
-    Ok(HttpResponse::Ok()
-        .content_type("text/html; charset=utf-8")
-        .body(playground_source(
-            GraphQLPlaygroundConfig::new("/graphql").subscription_endpoint("/graphql"),
-        )))
+#[post("/graphql", data = "<request>")]
+fn post_graphql_handler(
+    context: &State<GraphQLContext>,
+    request: juniper_rocket::GraphQLRequest,
+    schema: &State<Schema>,
+) -> juniper_rocket::GraphQLResponse {
+    request.execute_sync(&*schema, &*context)
 }
 
-#[actix_web::main]
-async fn main() -> async_graphql::Result<()> {
-    dotenv::dotenv().ok();
-    let db_connection = db::db_connection().await?;
-    let state = State::new(db_connection);
-    let schema = Schema::build(QueryRoot, EmptyMutation, EmptySubscription)
-        .data(state)
-        .extension(ApolloTracing)
-        .finish();
-
-    let listen_addr = env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8000".to_owned());
-    println!("Playground: http://localhost:8000");
-
-    HttpServer::new(move || {
-        App::new()
-            .data(schema.clone())
-            .service(web::resource("/graphql").guard(guard::Post()).to(index))
-            .service(
-                web::resource("/graphql")
-                    .guard(guard::Get())
-                    .to(index_playground),
-            )
-            .service(web::resource("/").guard(guard::Get()).to(index_playground))
-    })
-    .bind(listen_addr)?
-    .run()
-    .await?;
-
-    Ok(())
+#[launch]
+fn rocket() -> _ {
+    let pool = db::pool::get_pool();
+    Rocket::build()
+        .manage(GraphQLContext { pool })
+        .manage(Schema::new(
+            Query,
+            Mutation,
+            EmptySubscription::<GraphQLContext>::new(),
+        ))
+        .mount("/", routes![graphiql, post_graphql_handler])
 }

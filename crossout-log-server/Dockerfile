@@ -7,8 +7,8 @@ ENV RUST_TARGETS="x86_64-unknown-linux-musl"
 RUN rustup target install x86_64-unknown-linux-musl
 
 # Creating a placeholder project
-RUN USER=root cargo new rust-graphql
-WORKDIR /usr/src/rust-graphql
+RUN USER=root cargo new proj
+WORKDIR /usr/src/proj
 
 # moving deps info
 COPY ./Cargo.lock ./Cargo.lock
@@ -27,6 +27,6 @@ RUN cargo build --target x86_64-unknown-linux-musl --release
 
 # This creates a TINY container with the executable! Like 4-5mb srsly
 FROM scratch
-COPY --from=build /usr/src/rust-graphql/target/x86_64-unknown-linux-musl/release/rust-graphql .
+COPY --from=build /usr/src/proj/target/x86_64-unknown-linux-musl/release/proj .
 USER 1000
-CMD ["./rust-graphql"]
+CMD ["./proj"]
