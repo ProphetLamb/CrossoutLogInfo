@@ -1,8 +1,5 @@
 #![feature(let_chains)]
 
-use chrono::{NaiveDate, NaiveDateTime};
-use clap::Parser;
-use log::{parse_entry, Entry};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::{
@@ -10,21 +7,27 @@ use std::{
     io::{self, BufRead, BufReader},
 };
 
+use chrono::{NaiveDate, NaiveDateTime};
+use clap::Parser;
+
+use log::Entry;
+use parse::parse_entry;
 mod log;
+mod parse;
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 enum Args {
     /// Parses a combat.log file
-    Parse(ParseArgs),
-    /// Parses all logs in the log directory, either inferred or specified
+    File(FileArgs),
+    /// Parses all logs in the sub directories. Path can be inferred
     Directory(DirectoryArgs),
 }
 
 #[derive(Parser, Debug)]
-struct ParseArgs {
+struct FileArgs {
     /// The input combat.log file
-    #[clap(short, long)]
+    #[clap()]
     input: PathBuf,
     /// The date of the combat.log file
     #[clap(short, long)]
@@ -36,22 +39,45 @@ struct ParseArgs {
 
 #[derive(Parser, Debug)]
 struct DirectoryArgs {
+    /// The directory containing the logs. Default '${Documents}/My Games/Crossout/logs'
     #[clap(default_value = "")]
-    directory: PathBuf,
+    input: PathBuf,
+    /// The output directory for object files
+    #[clap(short, long)]
+    output: PathBuf,
 }
 
 fn main() {
     if let Err(e) = match Args::parse() {
-        Args::Parse(p) => parse_log(p),
-        Args::Directory(d) => directory_logs(d),
+        Args::File(p) => parse_log(p),
+        Args::Directory(d) => parse_logs_in_dir(d),
     } {
         println!("{}", e);
     }
 }
 
-fn directory_logs(args: DirectoryArgs) -> Result<(), Error> {
+fn parse_logs_in_dir(args: DirectoryArgs) -> Result<(), Error> {
+    if !dir_exists(&args.input) {
+        return Err(Error::DocDirNotFound);
+    }
+    if !dir_exists(&args.output) {
+        fs::create_dir_all(&args.output)?;
+    }
+    let logs = logs_in_dir(args.input)?;
+    parse_log_files(logs, &args.output)
+}
+
+fn dir_exists(path: &Path) -> bool {
+    if let Ok(meta) = path.metadata() {
+        meta.is_dir()
+    } else {
+        false
+    }
+}
+
+fn logs_in_dir(input: PathBuf) -> Result<Vec<(fs::DirEntry, NaiveDateTime)>, Error> {
     let mut log_dirs = Vec::default();
-    for dir in validate_logs_dir(args.directory)?
+    for dir in amortized_logs_dir(input)?
         .read_dir()?
         .flatten()
         .filter(|sub| sub.file_type().map_or(false, |t| t.is_dir()))
@@ -62,21 +88,25 @@ fn directory_logs(args: DirectoryArgs) -> Result<(), Error> {
         }
     }
 
-    for (dir, datetime) in log_dirs {
-        let mut combat_log = dir.path();
-        combat_log.push("combat.log");
-        let output = format!("./publish/{}.json", datetime.format("%Y.%m.%d %H.%M.%S"));
-        parse_log(ParseArgs {
-            input: combat_log,
-            date: datetime.date(),
-            output: output.into(),
-        })?;
-    }
+    Ok(log_dirs)
+}
 
+fn parse_log_files(log_dirs: Vec<(fs::DirEntry, NaiveDateTime)>, output_dir: &Path) -> Result<(), Error> {
+    for (dir, datetime) in log_dirs {
+        let mut input = dir.path();
+        input.push("combat.log");
+        let mut output = output_dir.to_path_buf();
+        output.push(format!("{}.bin", datetime.format("%Y.%m.%d %H.%M.%S")));
+        parse_log(FileArgs {
+            input,
+            date: datetime.date(),
+            output,
+        })?;
+    };
     Ok(())
 }
 
-fn validate_logs_dir(dir: PathBuf) -> Result<PathBuf, Error> {
+fn amortized_logs_dir(dir: PathBuf) -> Result<PathBuf, Error> {
     if dir.as_os_str().is_empty() {
         let mut dir = dirs::document_dir().ok_or(Error::DocDirNotFound)?;
         dir.push("My Games");
@@ -88,7 +118,7 @@ fn validate_logs_dir(dir: PathBuf) -> Result<PathBuf, Error> {
     }
 }
 
-fn parse_log(args: ParseArgs) -> Result<(), Error> {
+fn parse_log(args: FileArgs) -> Result<(), Error> {
     let input = open_file(&args.input)?;
     let mut messages = Vec::with_capacity(1024);
     let mut errors = Vec::with_capacity(1024);
@@ -176,7 +206,7 @@ mod test {
         let input = PathBuf::from_str("./scripts/unique_combat.log").expect("nope");
         let output = PathBuf::from_str("./output.log").expect("nope");
         let date = NaiveDate::from_ymd(2000, 1, 1);
-        parse_log(ParseArgs {
+        parse_log(FileArgs {
             input,
             date,
             output,
@@ -190,7 +220,7 @@ mod test {
         directory.push("My Games");
         directory.push("Crossout");
         directory.push("logs");
-        directory_logs(DirectoryArgs { directory }).expect("nope");
+        parse_logs_in_dir(DirectoryArgs { input: directory, output: "./publish".into() }).expect("nope");
     }
 
     #[test]
