@@ -62,7 +62,7 @@ fn parse_log(args: FileArgs) -> Result<(), Error> {
     if args.output.parent().map(|p| p.is_dir()).unwrap_or(false) {
         return Err(Error::DirNotFound(args.output));
     }
-    let (messages, errors) = parse::parse_logs(vec![(args.input, args.date.date(), 0..usize::MAX)]);
+    let (messages, errors) = parse::parse_logs(vec![(args.input, args.date.date(), 0..usize::MAX)].into_iter());
     write_output(&args.output, messages, errors)?;
     Ok(())
 }
