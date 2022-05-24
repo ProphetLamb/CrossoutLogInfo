@@ -1,7 +1,6 @@
 #![feature(let_chains)]
 
 use std::io::{BufWriter, Write};
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 
@@ -21,6 +20,7 @@ enum Args {
     File(FileArgs),
     /// Parses all logs in the sub directories. Path can be inferred
     Directory(DirectoryArgs),
+    // Watches all logs in the sub directories. Path can be inferred
 }
 
 #[derive(Parser, Debug)]
@@ -62,7 +62,8 @@ fn parse_log(args: FileArgs) -> Result<(), Error> {
     if args.output.parent().map(|p| p.is_dir()).unwrap_or(false) {
         return Err(Error::DirNotFound(args.output));
     }
-    let (messages, errors) = parse::parse_logs(vec![(args.input, args.date.date(), 0..usize::MAX)].into_iter());
+    let (messages, errors) =
+        parse::parse_logs(vec![(args.input, args.date.date(), 0..usize::MAX)].into_iter());
     write_output(&args.output, messages, errors)?;
     Ok(())
 }
@@ -76,8 +77,10 @@ fn parse_logs_in_dir(args: DirectoryArgs) -> Result<(), Error> {
         fs::create_dir_all(&args.output)?;
     }
     let logs = logs_in_dir(input)?;
-    let (messages, errors) = parse::parse_logs(logs.into_iter().map(|(p, dt)| (p, dt.date(),
-     0..usize::MAX)));
+    let (messages, errors) = parse::parse_logs(
+        logs.into_iter()
+            .map(|(p, dt)| (p, dt.date(), 0..usize::MAX)),
+    );
 
     let mut output = args.output;
     output.push("combat.log.bin");
@@ -151,6 +154,10 @@ mod test {
 
     #[test]
     fn test_directory_logs() {
-        parse_logs_in_dir(DirectoryArgs { input: "".into(), output: "./publish".into() }).expect("nope");
+        parse_logs_in_dir(DirectoryArgs {
+            input: "".into(),
+            output: "./publish".into(),
+        })
+        .expect("nope");
     }
 }

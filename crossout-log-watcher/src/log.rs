@@ -1,9 +1,6 @@
 use chrono::prelude::*;
-use flagset::{flags, FlagSet};
-use parse_display::{Display, FromStr};
-use serde::{Serialize, Deserialize};
-use std::str::FromStr;
 use chrono::{NaiveDate, NaiveTime};
+use flagset::{flags, FlagSet};
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::bytes::complete::take;
@@ -13,6 +10,9 @@ use nom::combinator::opt;
 use nom::combinator::{map_res, recognize};
 use nom::sequence::tuple;
 use nom::{AsChar, InputTakeAtPosition};
+use parse_display::{Display, FromStr};
+use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 fn parse_time<'a, E>(input: &'a str) -> nom::IResult<&'a str, NaiveTime, E>
 where
@@ -105,11 +105,14 @@ where
     ))
 }
 
-fn parse_game_mode<'a, P, E>(parser: P) -> impl FnOnce(&'a str) -> nom::IResult<&'a str, GameMode, E>
+fn parse_game_mode<'a, P, E>(
+    parser: P,
+) -> impl FnOnce(&'a str) -> nom::IResult<&'a str, GameMode, E>
 where
     P: nom::Parser<&'a str, &'a str, E>,
     E: nom::error::ParseError<&'a str>
-        + nom::error::FromExternalError<&'a str, parse_display::ParseError> {
+        + nom::error::FromExternalError<&'a str, parse_display::ParseError>,
+{
     move |input| {
         let (input, game_mode) = recognize(parser)(input)?;
         match if game_mode.is_empty() {
@@ -118,7 +121,11 @@ where
             GameMode::from_str(game_mode)
         } {
             Ok(game_mode) => Ok((input, game_mode)),
-            Err(e) =>  Err(nom::Err::Error(E::from_external_error(input, nom::error::ErrorKind::MapRes, e))),
+            Err(e) => Err(nom::Err::Error(E::from_external_error(
+                input,
+                nom::error::ErrorKind::MapRes,
+                e,
+            ))),
         }
     }
 }
