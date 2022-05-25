@@ -14,6 +14,7 @@ use wundergraph::query_builder::types::{HasMany, HasOne, WundergraphValue};
 
 pub mod generated;
 pub mod schema;
+pub mod db;
 pub mod endpoints;
 
 #[derive(
