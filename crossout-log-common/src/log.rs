@@ -1,18 +1,22 @@
 use chrono::prelude::*;
 use chrono::{NaiveDate, NaiveTime};
+#[cfg(feature = "diesel")]
+use diesel_derive_enum::DbEnum;
 use flagset::{flags, FlagSet};
+#[cfg(feature = "juniper")]
+use juniper::{graphql_object, GraphQLInputObject};
 use nom::branch::alt;
 use nom::bytes::complete::tag;
 use nom::bytes::complete::take;
 use nom::bytes::complete::take_while;
 use nom::character::complete::{digit1, hex_digit1};
-use nom::combinator::opt;
+use nom::combinator::{map, opt};
 use nom::combinator::{map_res, recognize};
 use nom::sequence::tuple;
 use nom::{AsChar, InputTakeAtPosition};
 use parse_display::{Display, FromStr};
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 
 fn parse_time<'a, E>(input: &'a str) -> nom::IResult<&'a str, NaiveTime, E>
 where
@@ -57,6 +61,12 @@ where
     }
 }
 
+macro_rules! map_into {
+    ($parser:expr) => {
+        map($parser, Payload::from)
+    };
+}
+
 fn parse_message<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
 where
     E: nom::error::ParseError<&'a str>
@@ -65,24 +75,24 @@ where
         + nom::error::FromExternalError<&'a str, parse_display::ParseError>,
 {
     alt((
-        parse_level_start,
+        map_into!(parse_game_start),
         parse_test_start,
         parse_test_finish,
-        parse_spawn_player,
-        parse_game_start,
-        parse_round_finish,
-        parse_game_finish,
+        map_into!(parse_spawn_player),
+        map_into!(parse_round_start),
+        map_into!(parse_round_finish),
+        map_into!(parse_game_finish),
         parse_battle_start,
-        parse_player_info,
-        parse_score,
-        parse_damage,
-        parse_stripe,
-        parse_kill,
-        parse_assist,
+        map_into!(parse_spawn),
+        map_into!(parse_score),
+        map_into!(parse_damage),
+        map_into!(parse_stripe),
+        map_into!(parse_kill),
+        map_into!(parse_assist),
     ))(input)
 }
 
-fn parse_level_start<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_game_start<'a, E>(input: &'a str) -> nom::IResult<&'a str, GameStart, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>
@@ -93,41 +103,16 @@ where
     let (input, _) = tag(": '")(input)?;
     let (input, level_name) = take_while(|c| c != '\'')(input)?;
     let (input, _) = tag("' ")(input)?;
-    let (input, game_mode) = parse_game_mode(take_while(not_ws))(input)?;
+    let (input, game_mode) = take_while(not_ws)(input)?;
     let (input, _) = tag(" ======")(input)?;
     Ok((
         input,
-        Payload::LevelStart {
+        GameStart {
             level_no,
             level_name: level_name.to_string(),
-            game_mode,
+            game_mode: game_mode.to_string(),
         },
     ))
-}
-
-fn parse_game_mode<'a, P, E>(
-    parser: P,
-) -> impl FnOnce(&'a str) -> nom::IResult<&'a str, GameMode, E>
-where
-    P: nom::Parser<&'a str, &'a str, E>,
-    E: nom::error::ParseError<&'a str>
-        + nom::error::FromExternalError<&'a str, parse_display::ParseError>,
-{
-    move |input| {
-        let (input, game_mode) = recognize(parser)(input)?;
-        match if game_mode.is_empty() {
-            Ok(GameMode::None)
-        } else {
-            GameMode::from_str(game_mode)
-        } {
-            Ok(game_mode) => Ok((input, game_mode)),
-            Err(e) => Err(nom::Err::Error(E::from_external_error(
-                input,
-                nom::error::ErrorKind::MapRes,
-                e,
-            ))),
-        }
-    }
 }
 
 fn parse_test_start<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
@@ -148,7 +133,7 @@ where
     Ok((input, Payload::TestFinish))
 }
 
-fn parse_spawn_player<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_spawn_player<'a, E>(input: &'a str) -> nom::IResult<&'a str, Player, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>,
@@ -166,7 +151,7 @@ where
     let (input, _) = tag(".")(input)?;
     Ok((
         input,
-        Payload::SpawnPlayer {
+        Player {
             player_no,
             nick_name: nick_name.to_string(),
             team,
@@ -180,27 +165,27 @@ fn from_hex(input: &str) -> Result<usize, std::num::ParseIntError> {
     usize::from_str_radix(input, 16)
 }
 
-fn parse_game_start<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_round_start<'a, E>(input: &'a str) -> nom::IResult<&'a str, RoundStart, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>
         + nom::error::FromExternalError<&'a str, parse_display::ParseError>,
 {
     let (input, _) = tag("===== Gameplay '")(input)?;
-    let (input, game_mode) = parse_game_mode(take_while(|c| c != '\''))(input)?;
+    let (input, game_mode) = take_while(|c| c != '\'')(input)?;
     let (input, _) = tag("' started, map '")(input)?;
     let (input, map) = take_while(|c| c != '\'')(input)?;
     let (input, _) = tag("' ======")(input)?;
     Ok((
         input,
-        Payload::GameStart {
-            game_mode,
+        RoundStart {
+            game_mode: game_mode.to_string(),
             map: map.to_string(),
         },
     ))
 }
 
-fn parse_round_finish<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_round_finish<'a, E>(input: &'a str) -> nom::IResult<&'a str, RoundFinish, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>
@@ -220,7 +205,7 @@ where
     let (input, _) = tag(" sec =====")(input)?;
     Ok((
         input,
-        Payload::GameFinish {
+        RoundFinish {
             round,
             finish_reason,
             winning_team,
@@ -230,7 +215,7 @@ where
     ))
 }
 
-fn parse_game_finish<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_game_finish<'a, E>(input: &'a str) -> nom::IResult<&'a str, RoundFinish, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>
@@ -248,7 +233,7 @@ where
     let (input, _) = tag(" sec =====")(input)?;
     Ok((
         input,
-        Payload::GameFinish {
+        RoundFinish {
             round: 0,
             finish_reason,
             winning_team,
@@ -279,7 +264,7 @@ where
     Ok((input, Payload::BattleStart))
 }
 
-fn parse_player_info<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_spawn<'a, E>(input: &'a str) -> nom::IResult<&'a str, Spawn, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>,
@@ -307,7 +292,7 @@ where
     let (input, design_hash) = map_res(recognize(hex_digit1), from_hex)(input)?;
     Ok((
         input,
-        Payload::PlayerInfo {
+        Spawn {
             player_no,
             user_id,
             party_id,
@@ -320,10 +305,11 @@ where
     ))
 }
 
-fn parse_score<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_score<'a, E>(input: &'a str) -> nom::IResult<&'a str, Score, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>
+        + nom::error::FromExternalError<&'a str, std::num::ParseFloatError>
         + nom::error::FromExternalError<&'a str, parse_display::ParseError>,
 {
     let (input, _) = tuple((
@@ -346,7 +332,7 @@ where
         tag("Got:"),
         take_while(char::is_whitespace),
     ))(input)?;
-    let (input, points) = map_res(recognize(digit1), str::parse)(input)?;
+    let (input, points) = map_res(recognize(float_digit1), str::parse)(input)?;
     let (input, _) = tuple((
         tag(","),
         take_while(char::is_whitespace),
@@ -356,16 +342,16 @@ where
     let (input, reason) = map_res(recognize(take_while(|_| true)), str::parse)(input)?;
     Ok((
         input,
-        Payload::Score {
+        Score {
             player_no,
             nick_name: nick_name.to_string(),
-            points,
+            value: points,
             reason,
         },
     ))
 }
 
-fn parse_damage<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_damage<'a, E>(input: &'a str) -> nom::IResult<&'a str, Damage, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>
@@ -384,11 +370,11 @@ where
     let (input, flags) = parse_damage_flags(input)?;
     Ok((
         input,
-        Payload::Damage {
+        Damage {
             victim: victim.to_string(),
             attacker: attacker.to_string(),
             weapon: weapon.to_string(),
-            damage,
+            value: damage,
             flags,
         },
     ))
@@ -418,7 +404,7 @@ where
     Ok((input, flags))
 }
 
-fn parse_stripe<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_stripe<'a, E>(input: &'a str) -> nom::IResult<&'a str, Stripe, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>,
@@ -434,7 +420,7 @@ where
     let (input, _) = tag("].")(input)?;
     Ok((
         input,
-        Payload::Stripe {
+        Stripe {
             name: name.to_string(),
             value,
             player_no,
@@ -443,7 +429,7 @@ where
     ))
 }
 
-fn parse_kill<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_kill<'a, E>(input: &'a str) -> nom::IResult<&'a str, Kill, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>,
@@ -454,14 +440,14 @@ where
     let (input, killer) = take_while(not_ws)(input)?;
     Ok((
         input,
-        Payload::Kill {
+        Kill {
             victim: victim.to_string(),
             killer: killer.to_string(),
         },
     ))
 }
 
-fn parse_assist<'a, E>(input: &'a str) -> nom::IResult<&'a str, Payload, E>
+fn parse_assist<'a, E>(input: &'a str) -> nom::IResult<&'a str, Assist, E>
 where
     E: nom::error::ParseError<&'a str>
         + nom::error::FromExternalError<&'a str, std::num::ParseIntError>
@@ -480,95 +466,199 @@ where
     let (input, flags) = parse_damage_flags(input)?;
     Ok((
         input,
-        Payload::Assist {
+        Assist {
             assistant: assistant.to_string(),
             weapon: weapon.to_string(),
             elapsed_sec,
             damage_dealt,
-            flags,
+            damage_flags: flags,
         },
     ))
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
 pub struct Entry {
     pub time_stamp: NaiveDateTime,
     pub message: Payload,
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct Player {
+    pub player_no: u8,
+    pub nick_name: String,
+    pub team: u8,
+    pub spawn_counter: usize,
+    pub design_hash: usize,
+}
+
+impl From<Player> for Payload {
+    fn from(o: Player) -> Self {
+        Payload::Player(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct GameStart {
+    pub level_no: usize,
+    pub level_name: String,
+    pub game_mode: String,
+}
+
+impl From<GameStart> for Payload {
+    fn from(o: GameStart) -> Self {
+        Payload::GameStart(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct RoundStart {
+    pub game_mode: String,
+    pub map: String,
+}
+
+impl From<RoundStart> for Payload {
+    fn from(o: RoundStart) -> Self {
+        Payload::RoundStart(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct RoundFinish {
+    pub round: u8,
+    pub finish_reason: FinishReason,
+    pub winning_team: u8,
+    pub win_reason: WinReason,
+    pub duration_sec: f32,
+}
+
+impl From<RoundFinish> for Payload {
+    fn from(o: RoundFinish) -> Self {
+        Payload::RoundFinish(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct Spawn {
+    pub player_no: u8,
+    pub user_id: usize,
+    pub party_id: usize,
+    pub nick_name: String,
+    pub team: u8,
+    pub bot: u8,
+    pub session: usize,
+    pub design_hash: usize,
+}
+
+impl From<Spawn> for Payload {
+    fn from(o: Spawn) -> Self {
+        Payload::Spawn(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct Score {
+    pub player_no: u8,
+    pub nick_name: String,
+    pub value: f32,
+    pub reason: ScoreReason,
+}
+
+impl From<Score> for Payload {
+    fn from(o: Score) -> Self {
+        Payload::Score(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct Damage {
+    pub victim: String,
+    pub attacker: String,
+    pub weapon: String,
+    pub value: f32,
+    pub flags: FlagSet<DamageFlag>,
+}
+
+impl From<Damage> for Payload {
+    fn from(o: Damage) -> Self {
+        Payload::Damage(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct Stripe {
+    pub name: String,
+    pub value: usize,
+    pub player_no: u8,
+    pub nick_name: String,
+}
+
+impl From<Stripe> for Payload {
+    fn from(o: Stripe) -> Self {
+        Payload::Stripe(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct Assist {
+    pub assistant: String,
+    pub weapon: String,
+    pub elapsed_sec: f32,
+    pub damage_dealt: f32,
+    pub damage_flags: FlagSet<DamageFlag>,
+}
+
+impl From<Assist> for Payload {
+    fn from(o: Assist) -> Self {
+        Payload::Assist(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
+pub struct Kill {
+    pub victim: String,
+    pub killer: String,
+}
+
+impl From<Kill> for Payload {
+    fn from(o: Kill) -> Self {
+        Payload::Kill(o)
+    }
+}
+
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, PartialEq)]
 pub enum Payload {
-    LevelStart {
-        level_no: usize,
-        level_name: String,
-        game_mode: GameMode,
-    },
+    GameStart(GameStart),
     TestStart,
     TestFinish,
-    SpawnPlayer {
-        player_no: u8,
-        nick_name: String,
-        team: u8,
-        spawn_counter: usize,
-        design_hash: usize,
-    },
-    GameStart {
-        game_mode: GameMode,
-        map: String,
-    },
-    GameFinish {
-        round: u8,
-        finish_reason: FinishReason,
-        winning_team: u8,
-        win_reason: WinReason,
-        duration_sec: f32,
-    },
+    Player(Player),
+    RoundStart(RoundStart),
+    RoundFinish(RoundFinish),
     BattleStart,
-    PlayerInfo {
-        player_no: u8,
-        user_id: usize,
-        party_id: usize,
-        nick_name: String,
-        team: u8,
-        bot: u8,
-        session: usize,
-        design_hash: usize,
-    },
-    Score {
-        player_no: u8,
-        nick_name: String,
-        points: usize,
-        reason: ScoreReason,
-    },
-    Damage {
-        victim: String,
-        attacker: String,
-        weapon: String,
-        damage: f32,
-        flags: FlagSet<DamageFlag>,
-    },
-    Stripe {
-        name: String,
-        value: usize,
-        player_no: u8,
-        nick_name: String,
-    },
-    Kill {
-        victim: String,
-        killer: String,
-    },
-    Assist {
-        assistant: String,
-        weapon: String,
-        elapsed_sec: f32,
-        damage_dealt: f32,
-        flags: FlagSet<DamageFlag>,
-    },
+    Spawn(Spawn),
+    Score(Score),
+    Damage(Damage),
+    Stripe(Stripe),
+    Kill(Kill),
+    Assist(Assist),
 }
 
 flags! {
-    #[derive(Serialize, Deserialize, Display, FromStr)]
-    pub enum DamageFlag: usize {
+    #[cfg_attr(feature = "diesel", derive(DbEnum))]
+    #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+    #[derive(Display, FromStr)]
+    pub enum DamageFlag: u32 {
         /// DMG_GENERIC: Indirect damage or other.
         #[display("DMG_GENERIC")]
         Generic,
@@ -623,7 +713,9 @@ flags! {
     }
 }
 
-#[derive(Serialize, Deserialize, Display, PartialEq, Eq, FromStr, Debug)]
+#[cfg_attr(feature = "diesel", derive(DbEnum))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Display, PartialEq, Eq, FromStr, Debug)]
 pub enum ScoreReason {
     /// FIRST_DAMAGE: First Blood
     #[display("FIRST_DAMAGE")]
@@ -645,58 +737,56 @@ pub enum ScoreReason {
     Shield,
 }
 
-#[derive(Serialize, Deserialize, Display, PartialEq, Eq, FromStr, Debug)]
+#[cfg_attr(feature = "diesel", derive(DbEnum))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Display, PartialEq, Eq, FromStr, Debug)]
 pub enum FinishReason {
     /// no_cars: All vehicles are eliminated
     #[display("no_cars")]
     NoCars,
-    /// base_captured: Base/s are captured before the timer runs out.
+    /// base_captured: Base/s are captured before the timer ran out.
     #[display("base_captured")]
     BaseCaptured,
-    /// timer: The timer runs out. Also the case, if only one base is captured, in certain game modes.
+    /// timer: The timer ran out. Also the case, if only one base is captured, in certain game modes.
     #[display("timer")]
     Timer,
 }
 
-#[derive(Serialize, Deserialize, Display, PartialEq, Eq, FromStr, Debug)]
+#[cfg_attr(feature = "diesel", derive(DbEnum))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Display, PartialEq, Eq, FromStr, Debug)]
 pub enum WinReason {
-    /// NONE: Quit the game
-    #[display("NONE")]
-    None,
-    /// MORE_CARS_LEFT: All enemies eliminated
-    #[display("MORE_CARS_LEFT")]
-    MoreCarsLeft,
-    /// MORE_BASE_CAPTURED: Captured the majority of the bases. Ended before timer runs out.
-    #[display("MORE_BASE_CAPTURED")]
-    MoreBaseCaptured,
-    /// MORE_BASE_CAPTURED_TIMER: Captured more bases then the enemy, and the timer runs out.
-    #[display("MORE_BASE_CAPTURED_TIMER")]
-    MoreBaseCapturedTimer,
-    /// DOMINATION: Captured the central base.
-    #[display("DOMINATION")]
-    Domination,
-    /// DEATMATCH_TIMER: The timer ran out in PvP, wile enemies were left. And the XO devs cant type for shit.
-    #[display("DEATMATCH_TIMER")]
-    DeathMatchTimer,
     /// BEST_OF_THREE: The clan-wars battle is decided
     #[display("BEST_OF_THREE")]
     BestOfThree,
-}
-
-#[derive(Serialize, Deserialize, Display, PartialEq, Eq, FromStr, Debug)]
-pub enum GameMode {
-    #[display("Unknown")]
-    None,
-    #[display("Conquer")]
-    Conquer,
-    #[display("ConquerBestOf3")]
-    ConquerBestOf3,
-    #[display("Assault")]
-    Assault,
-    #[display("AssaultBestOf3")]
-    AssaultBestOf3,
-    #[display("Domination")]
+    /// BEST_OF_THREE_TIMER: The clan-wars battle is decided
+    #[display("BEST_OF_THREE_TIMER")]
+    BestOfThreeTimer,
+    /// DEATMATCH: All enemies were eliminates.
+    #[display("DEATMATCH")]
+    DeathMatch,
+    /// DEATMATCH_TIMER: All enemies were eliminated, and the timer ran out. Plus the XO devs cant type for shit.
+    #[display("DEATMATCH_TIMER")]
+    DeathMatchTimer,
+    /// DOMINATION: Captured the central base.
+    #[display("DOMINATION")]
     Domination,
-    #[display("Brawl_BDCrossout")]
-    BrawlBDCrossout,
+    /// DOMINATION: Captured the central base, and the timer ran out.
+    #[display("DOMINATION_TIMER")]
+    DominationTimer,
+    /// MORE_BASE_CAPTURED: Captured the majority of the bases. Ended before timer ran out.
+    #[display("MORE_BASE_CAPTURED")]
+    MoreBaseCaptured,
+    /// MORE_BASE_CAPTURED_TIMER: Captured more bases then the enemy, and the timer ran out.
+    #[display("MORE_BASE_CAPTURED_TIMER")]
+    MoreBaseCapturedTimer,
+    /// MORE_CARS_LEFT: All enemies eliminated
+    #[display("MORE_CARS_LEFT")]
+    MoreCarsLeft,
+    /// MORE_CARS_LEFT_TIMER: More allies left, and the timer ran out.
+    #[display("MORE_CARS_LEFT_TIMER")]
+    MoreCarsLeftTimer,
+    /// NONE: Quit the game
+    #[display("NONE")]
+    None,
 }

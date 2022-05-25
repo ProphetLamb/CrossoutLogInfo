@@ -6,11 +6,10 @@ use std::{fs, io};
 
 use chrono::NaiveDateTime;
 use clap::Parser;
-
-use log::Entry;
 use parse::logs_in_dir;
 
-mod log;
+use crossout_log_common::log::Entry;
+
 mod parse;
 
 #[derive(Parser, Debug)]

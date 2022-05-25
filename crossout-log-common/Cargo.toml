@@ -1,0 +1,27 @@
+[package]
+authors = ["ProphetLamb <prophet.lamb@gmail.com>"]
+categories = ["command-line-utilities"]
+description = ""
+edition = "2021"
+license = "MIT/Apache-2.0"
+name = "crossout-log-common"
+readme = "README.md"
+repository = "https://github.com/ProphetLamb/CrossoutLogInfo"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+chrono = { version = "0.4" }
+diesel = { version = "1.4", optional = true }
+diesel-derive-enum = { version = "1.1", optional = true }
+flagset = { version = "0.4" }
+juniper = { version = "0.15", optional = true }
+nom = "7.1"
+parse-display = "0.5"
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+
+[features]
+serde = ["dep:serde", "chrono/serde", "flagset/serde"]
+diesel = ["dep:diesel", "dep:diesel-derive-enum"]

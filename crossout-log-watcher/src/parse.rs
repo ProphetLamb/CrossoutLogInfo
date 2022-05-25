@@ -18,10 +18,9 @@ use crossbeam::{
     queue::SegQueue,
 };
 
-use crate::{
-    log::{parse_entry, Entry},
-    Error,
-};
+use crossout_log_common::log::{Entry, parse_entry};
+
+use crate::Error;
 
 pub fn logs_in_dir(input: PathBuf) -> Result<Vec<(PathBuf, NaiveDateTime)>, Error> {
     let mut log_dirs = Vec::default();
