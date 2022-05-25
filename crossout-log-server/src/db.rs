@@ -19,16 +19,6 @@ pub type DbPool = Pool<ConnectionManager<DbConnection>>;
 pub type DbManager<Conn> = PooledConnection<ConnectionManager<Conn>>;
 pub type GraphQLData = GraphQLRequest<WundergraphScalarValue>;
 
-pub fn get_url() -> String {
-    env::var("DATABASE_URL").unwrap_or_else(|_| format!(
-        "postgres://{}:{}@{}/{}",
-        env::var("POSTGRES_USER").unwrap_or_else(|_| "postgres".to_string()),
-        env::var("POSTGRES_PASSWORD").unwrap_or_else(|_| "postgres".to_string()),
-        env::var("POSTGRES_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        env::var("POSTGRES_DB").unwrap_or_else(|_| "crossout-log-server".to_string())
-    ))
-}
-
 #[derive(Debug)]
 pub struct DbContext<Conn>
 where
