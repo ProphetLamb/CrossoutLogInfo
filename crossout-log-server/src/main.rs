@@ -1,5 +1,6 @@
 use std::env;
 
+use actix_web::web::Data;
 use actix_web::{
     middleware,
     App,  HttpServer,
@@ -52,13 +53,13 @@ async fn main() -> std::io::Result<()> {
     let pool = get_pool(get_url());
     apply_migrations(&pool);
 
-    let data = get_app_state(pool);
+    let data = get_data(pool);
     let my_url = env::var("MY_URL").unwrap_or_else(|_| "127.0.0.1:8088".into());
 
     println!("Launching HTTP server at {}", my_url);
     HttpServer::new(move || {
         App::new()
-            .data(data.clone())
+            .app_data(data.clone())
             .wrap(middleware::Logger::default())
             .configure(configure_endpoints)
     })

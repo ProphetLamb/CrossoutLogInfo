@@ -1,5 +1,6 @@
 use std::{env, io};
 
+use actix_web::web::Data;
 use diesel::{backend::Backend};
 use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 use diesel::{Connection, Identifiable};
@@ -72,12 +73,12 @@ pub struct AppState {
     pub pool: Arc<DbPool>,
 }
 
-pub fn get_app_state(pool: DbPool) -> AppState {
+pub fn get_data(pool: DbPool) -> Data<AppState> {
     let query = Query::<DbContext<DbConnection>>::default();
     let mutation = Mutation::<DbContext<DbConnection>>::default();
     let schema = Schema::new(query, mutation);
     let schema = Arc::new(schema);
     let pool = Arc::new(pool);
-    AppState { schema, pool }
+    Data::new(AppState { schema, pool })
 }
 
